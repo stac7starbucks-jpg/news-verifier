@@ -1,0 +1,12 @@
+node_modules
+.git
+.gitignore
+.env
+.env.local
+src/**/*.jsx
+vite.config.js
+package.json
+README.md
+.DS_Store
+netlify/
+netlify.toml

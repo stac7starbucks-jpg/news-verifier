@@ -1,0 +1,22 @@
+{
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "name": "verifai-pro",
+  "env": {
+    "ANTHROPIC_API_KEY": "@anthropic_api_key"
+  },
+  "envDescription": {
+    "ANTHROPIC_API_KEY": "Your Anthropic API key for the proxy function"
+  },
+  "public": false,
+  "functions": {
+    "api/**/*.js": {
+      "memory": 3008,
+      "maxDuration": 30
+    }
+  },
+  "redirects": [],
+  "rewrites": [],
+  "headers": []
+}
