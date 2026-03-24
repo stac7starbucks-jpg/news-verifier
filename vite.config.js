@@ -12,6 +12,14 @@ export default defineConfig(({ mode }) => {
         name: 'anthropic-dev-proxy',
         configureServer(server) {
           server.middlewares.use(async (req, res, next) => {
+            if (req.url === '/api/anthropic' && req.method === 'OPTIONS') {
+              res.statusCode = 204
+              res.setHeader('Access-Control-Allow-Origin', '*')
+              res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+              res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+              return res.end()
+            }
+
             if (req.url !== '/api/anthropic' || req.method !== 'POST') {
               return next()
             }

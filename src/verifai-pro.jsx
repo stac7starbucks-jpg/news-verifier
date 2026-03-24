@@ -179,12 +179,17 @@ export default function VerifaiPro() {
           ? `Extract and analyze this image content for misinformation. Also use web search to verify any claims or text found.`
           : `Use web search to verify claims in this content and check any URLs mentioned. Analyze for misinformation:\n\n${input}`;
 
-      const messages = imageBase64
+      const userMessages = imageBase64
         ? [{ role: "user", content: [
             { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
             { type: "text", text: userMsg }
           ]}]
         : [{ role: "user", content: userMsg }];
+
+      const apiMessages = [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...userMessages,
+      ];
 
       // 🔒 Calls our secure Netlify Function proxy instead of Anthropic directly
       const res = await fetch("/api/anthropic", {
@@ -193,9 +198,7 @@ export default function VerifaiPro() {
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
-          system: SYSTEM_PROMPT,
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-          messages,
+          messages: apiMessages,
         }),
       });
 
