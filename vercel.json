@@ -4,10 +4,12 @@
   "installCommand": "npm install",
   "name": "verifai-pro",
   "env": {
-    "ANTHROPIC_API_KEY": "@anthropic_api_key"
+    "ANTHROPIC_API_KEY": "@anthropic_api_key",
+    "GEMINI_API_KEY": "@gemini_api_key"
   },
   "envDescription": {
-    "ANTHROPIC_API_KEY": "Your Anthropic API key for the proxy function"
+    "ANTHROPIC_API_KEY": "Optional Anthropic API key for the proxy function",
+    "GEMINI_API_KEY": "Gemini API key for the proxy function"
   },
   "public": false,
   "functions": {
