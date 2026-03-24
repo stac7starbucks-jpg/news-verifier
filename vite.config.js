@@ -1,5 +1,14 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import { createFallbackAnthropicResponse } from './lib/fallback-analysis.js'
+
+function safeParseJson(value) {
+  try {
+    return value ? JSON.parse(value) : {}
+  } catch {
+    return {}
+  }
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -30,12 +39,13 @@ export default defineConfig(({ mode }) => {
               req.on('end', async () => {
                 try {
                   if (!anthropicKey) {
-                    res.statusCode = 400
+                    const fallback = await createFallbackAnthropicResponse(safeParseJson(body), 'No Anthropic API key is configured')
+                    res.statusCode = 200
                     res.setHeader('Content-Type', 'application/json')
                     res.setHeader('Access-Control-Allow-Origin', '*')
                     res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
                     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-                    return res.end(JSON.stringify({ error: 'Missing Anthropic API key in environment. Set ANTHROPIC_API_KEY or VITE_ANTHROPIC_API_KEY.' }))
+                    return res.end(JSON.stringify(fallback))
                   }
 
                   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -50,28 +60,55 @@ export default defineConfig(({ mode }) => {
                   })
 
                   const data = await response.text()
-                  res.statusCode = response.status
+                  if (!response.ok) {
+                    let parsed = {}
+
+                    try {
+                      parsed = data ? JSON.parse(data) : {}
+                    } catch {
+                      parsed = { error: data || `Anthropic request failed with HTTP ${response.status}` }
+                    }
+
+                    const fallbackReason = typeof parsed?.error?.message === 'string'
+                      ? parsed.error.message
+                      : typeof parsed?.error === 'string'
+                        ? parsed.error
+                        : `Anthropic request failed with HTTP ${response.status}`
+                    const fallback = await createFallbackAnthropicResponse(safeParseJson(body), fallbackReason)
+
+                    res.statusCode = 200
+                    res.setHeader('Content-Type', 'application/json')
+                    res.setHeader('Access-Control-Allow-Origin', '*')
+                    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+                    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+                    return res.end(JSON.stringify(fallback))
+                  }
+
+                  res.statusCode = 200
                   res.setHeader('Content-Type', 'application/json')
                   res.setHeader('Access-Control-Allow-Origin', '*')
                   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
                   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
                   res.end(data)
                 } catch (err) {
-                  res.statusCode = 500
+                  const fallback = await createFallbackAnthropicResponse(safeParseJson(body), err.message || 'Unexpected proxy error')
+                  res.statusCode = 200
                   res.setHeader('Content-Type', 'application/json')
                   res.setHeader('Access-Control-Allow-Origin', '*')
                   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
                   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-                  res.end(JSON.stringify({ error: err.message }))
+                  res.end(JSON.stringify(fallback))
                 }
               })
             } catch (err) {
-              res.statusCode = 500
+              res.statusCode = 200
               res.setHeader('Content-Type', 'application/json')
               res.setHeader('Access-Control-Allow-Origin', '*')
               res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
               res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-              res.end(JSON.stringify({ error: err.message }))
+              createFallbackAnthropicResponse({}, err.message || 'Unexpected proxy setup error')
+                .then((fallback) => res.end(JSON.stringify(fallback)))
+                .catch(() => res.end(JSON.stringify({ error: err.message })))
             }
           })
         },

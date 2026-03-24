@@ -174,6 +174,128 @@ function extractImagePayload(dataUrl) {
   };
 }
 
+function buildFallbackVerdict(truthScore, safetyStatus, suspicionScore) {
+  if (safetyStatus === "Dangerous") return "Likely False";
+  if (truthScore >= 70) return "Likely True";
+  if (truthScore <= 30 || suspicionScore >= 35) return "Misleading";
+  return "Unverified";
+}
+
+function buildLocalFallbackResult(text, { reason = "Anthropic request failed", hasImage = false } = {}) {
+  const urls = String(text || "").match(/https?:\/\/[^\s<>"']+/gi) || [];
+  const primaryUrl = urls[0] || "";
+  const redFlags = [];
+  const propagandaPatterns = [];
+  const linkFlags = [];
+  let suspicionScore = 0;
+  let safetyStatus = "Unknown";
+  let httpsSecure = null;
+
+  if (/\b(shocking|breaking|dead|urgent|warning|cover-?up|share this)\b/i.test(text)) {
+    redFlags.push("Sensational wording");
+    suspicionScore += 12;
+  }
+
+  if (/\b(they don't want you to know|hidden truth|everyone knows|never|always)\b/i.test(text)) {
+    propagandaPatterns.push("Conspiracy framing");
+    suspicionScore += 10;
+  }
+
+  if (text && text.trim().length < 30) {
+    redFlags.push("Very short claim with little context");
+    suspicionScore += 10;
+  }
+
+  if (!urls.length && !/\baccording to|source|reported by|official|study\b/i.test(text)) {
+    redFlags.push("No supporting source cited");
+    suspicionScore += 8;
+  }
+
+  if (hasImage) {
+    redFlags.push("Image content could not be deeply inspected without a live AI model");
+    suspicionScore += 5;
+  }
+
+  if (primaryUrl) {
+    try {
+      const parsedUrl = new URL(primaryUrl);
+      httpsSecure = parsedUrl.protocol === "https:";
+      safetyStatus = httpsSecure ? "Safe" : "Suspicious";
+
+      if (!httpsSecure) {
+        linkFlags.push("Uses insecure HTTP");
+        suspicionScore += 15;
+      }
+
+      if ((parsedUrl.hostname.match(/-/g) || []).length >= 3) {
+        linkFlags.push("Excessive hyphens in domain");
+        suspicionScore += 8;
+      }
+
+      if (/^(xn--|\d{1,3}(\.\d{1,3}){3}$)/i.test(parsedUrl.hostname)) {
+        linkFlags.push("Unusual domain format");
+        suspicionScore += 15;
+      }
+
+      if (/\.(zip|top|click|xyz|work)$/i.test(parsedUrl.hostname)) {
+        linkFlags.push("High-risk TLD");
+        suspicionScore += 12;
+      }
+    } catch {
+      safetyStatus = "Suspicious";
+      linkFlags.push("Malformed URL");
+      suspicionScore += 20;
+    }
+  }
+
+  if (suspicionScore >= 35) safetyStatus = primaryUrl ? "Dangerous" : safetyStatus;
+  else if (suspicionScore >= 15 && primaryUrl) safetyStatus = "Suspicious";
+
+  const sourceBonus = primaryUrl ? (httpsSecure ? 10 : 5) : 0;
+  const truthScore = clampPercent(58 + sourceBonus - suspicionScore);
+  const finalVerdict = buildFallbackVerdict(truthScore, safetyStatus, suspicionScore);
+  const trustPercent = clampPercent(truthScore);
+  const doubtPercent = 100 - trustPercent;
+
+  return normalizeAnalysisResult({
+    truth_score: truthScore,
+    ai_generated: text && text.trim().split(/\s+/).length > 120 ? "Possibly AI-generated" : "Likely Human-written",
+    link_safety: primaryUrl
+      ? {
+          is_url_analyzed: true,
+          safety_status: safetyStatus,
+          domain_age: "Unknown",
+          https_secure: httpsSecure,
+          flags: linkFlags,
+          redirect_risk: "Unknown",
+          category: "Unknown",
+        }
+      : DEFAULT_ANALYSIS_RESULT.link_safety,
+    web_verified_sources: primaryUrl
+      ? [{ claim: `Checked destination: ${primaryUrl}`, verdict: "Unverified", source: primaryUrl }]
+      : [],
+    propaganda_patterns: propagandaPatterns,
+    red_flags: redFlags,
+    source_credibility: primaryUrl
+      ? "Fallback analysis used the available URL and language cues because the Anthropic request could not be completed."
+      : "Fallback analysis used language cues only because no directly verifiable source was provided.",
+    account_reliability: {
+      score: clampPercent(100 - suspicionScore),
+      insight: primaryUrl
+        ? "Reliability was estimated from the URL structure and the wording in the claim."
+        : "Reliability was estimated from wording because the claim did not include a direct source.",
+    },
+    viral_risk: suspicionScore >= 45 ? "High" : suspicionScore >= 20 ? "Medium" : "Low",
+    crowd_verification: {
+      trust_percent: trustPercent,
+      doubt_percent: doubtPercent,
+    },
+    final_verdict: finalVerdict,
+    confidence_note: "Fallback analysis was used because the Anthropic request could not be completed. This result is heuristic and should be verified with trusted reporting or official sources.",
+    explanation: `Anthropic was unavailable for this request (${reason}), so Verifai used its built-in fallback analyzer. ${redFlags.length ? `Main caution points: ${redFlags.slice(0, 3).join(", ")}.` : "The result is based on limited local heuristics."}`,
+  });
+}
+
 function isValidUrl(str) {
   try { const u = new URL(str.trim()); return u.protocol === "http:" || u.protocol === "https:"; }
   catch { return false; }
@@ -316,12 +438,17 @@ export default function VerifaiPro() {
         const errJson = await res.json().catch(() => null);
         const errText = errJson?.error?.message || errJson?.error || `HTTP ${res.status}`;
         const normalizedError = typeof errText === "string" ? errText : JSON.stringify(errText);
+        const fallback = buildLocalFallbackResult(input.trim(), {
+          reason: /credit balance is too low|plans & billing|purchase credits/i.test(normalizedError)
+            ? "The Anthropic API key is valid, but that account has no credits"
+            : normalizedError,
+          hasImage: Boolean(imageBase64),
+        });
 
-        if (/credit balance is too low|plans & billing|purchase credits/i.test(normalizedError)) {
-          throw new Error("The Anthropic API key is valid, but that account has no credits. Add credits in Anthropic Plans & Billing or switch to a funded API key.");
-        }
-
-        throw new Error(normalizedError);
+        clearInterval(stepInterval);
+        setScanStep(SCAN_STEPS.length);
+        setResult(fallback);
+        return;
       }
 
       const data = await res.json();
@@ -341,7 +468,15 @@ export default function VerifaiPro() {
     } catch (e) {
       clearInterval(stepInterval);
       console.error('Analysis error', e);
-      setError(`Analysis failed: ${e.message}`);
+
+      const fallback = buildLocalFallbackResult(input.trim(), {
+        reason: e.message || "Unexpected analysis error",
+        hasImage: Boolean(imageBase64),
+      });
+
+      setScanStep(SCAN_STEPS.length);
+      setResult(fallback);
+      setError(null);
     } finally {
       setLoading(false);
     }

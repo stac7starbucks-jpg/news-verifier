@@ -1,3 +1,5 @@
+import { createFallbackAnthropicResponse } from "../lib/fallback-analysis.js";
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -20,7 +22,8 @@ export default async function handler(req, res) {
     const anthropicKey = process.env.ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
 
     if (!anthropicKey) {
-      return res.status(400).json({ error: "Missing Anthropic API key in environment. Set ANTHROPIC_API_KEY or VITE_ANTHROPIC_API_KEY." });
+      const fallback = await createFallbackAnthropicResponse(body, "No Anthropic API key is configured");
+      return res.status(200).json(fallback);
     }
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -44,11 +47,18 @@ export default async function handler(req, res) {
     }
 
     if (!response.ok) {
-      return res.status(response.status).json({ error: data });
+      const fallbackReason = typeof data?.error?.message === "string"
+        ? data.error.message
+        : typeof data?.error === "string"
+          ? data.error
+          : `Anthropic request failed with HTTP ${response.status}`;
+      const fallback = await createFallbackAnthropicResponse(body, fallbackReason);
+      return res.status(200).json(fallback);
     }
 
     return res.status(200).json(data);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    const fallback = await createFallbackAnthropicResponse(req.body, err.message || "Unexpected server error");
+    return res.status(200).json(fallback);
   }
 }
