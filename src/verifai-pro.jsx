@@ -60,9 +60,119 @@ const verdictConfig = {
 };
 const safetyColor = { Safe: "#00e676", Suspicious: "#ffb300", Dangerous: "#ff1744", Unknown: "#607d8b" };
 const safetyIcon  = { Safe: "🛡", Suspicious: "⚠", Dangerous: "☠", Unknown: "?" };
-const viralColor  = { Low: "#00e676", Medium: "#ffb300", High: "#ff1744" };
-const aiColor     = { "Likely AI-generated": "#ff6d00", "Possibly AI-generated": "#ffb300", "Likely Human-written": "#00e676" };
+const viralColor  = { Low: "#00e676", Medium: "#ffb300", High: "#ff1744", Unknown: "#607d8b" };
+const aiColor     = { "Likely AI-generated": "#ff6d00", "Possibly AI-generated": "#ffb300", "Likely Human-written": "#00e676", Unknown: "#607d8b" };
 const claimColor  = { Confirmed: "#00e676", Contradicted: "#ff1744", Unverified: "#ffb300" };
+
+const DEFAULT_ANALYSIS_RESULT = {
+  truth_score: 0,
+  ai_generated: "Unknown",
+  link_safety: {
+    is_url_analyzed: false,
+    safety_status: "Unknown",
+    domain_age: "Unknown",
+    https_secure: null,
+    flags: [],
+    redirect_risk: "Unknown",
+    category: "Unknown",
+  },
+  web_verified_sources: [],
+  propaganda_patterns: [],
+  red_flags: [],
+  source_credibility: "No source credibility summary returned.",
+  account_reliability: { score: 0, insight: "No account reliability insight returned." },
+  viral_risk: "Unknown",
+  crowd_verification: { trust_percent: 0, doubt_percent: 0 },
+  final_verdict: "Unverified",
+  confidence_note: "This analysis is probabilistic and not guaranteed. Users should verify with trusted sources.",
+  explanation: "No explanation returned.",
+};
+
+function clampPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.max(0, Math.min(100, Math.round(num)));
+}
+
+function normalizeAnalysisResult(raw) {
+  if (!raw || typeof raw !== "object") {
+    return DEFAULT_ANALYSIS_RESULT;
+  }
+
+  const linkSafety = raw.link_safety && typeof raw.link_safety === "object" ? raw.link_safety : {};
+  const accountReliability = raw.account_reliability && typeof raw.account_reliability === "object" ? raw.account_reliability : {};
+  const crowdVerification = raw.crowd_verification && typeof raw.crowd_verification === "object" ? raw.crowd_verification : {};
+
+  return {
+    ...DEFAULT_ANALYSIS_RESULT,
+    ...raw,
+    truth_score: clampPercent(raw.truth_score),
+    ai_generated: aiColor[raw.ai_generated] ? raw.ai_generated : DEFAULT_ANALYSIS_RESULT.ai_generated,
+    link_safety: {
+      ...DEFAULT_ANALYSIS_RESULT.link_safety,
+      ...linkSafety,
+      safety_status: safetyColor[linkSafety.safety_status] ? linkSafety.safety_status : DEFAULT_ANALYSIS_RESULT.link_safety.safety_status,
+      https_secure: typeof linkSafety.https_secure === "boolean" || linkSafety.https_secure === null
+        ? linkSafety.https_secure
+        : DEFAULT_ANALYSIS_RESULT.link_safety.https_secure,
+      flags: Array.isArray(linkSafety.flags) ? linkSafety.flags.filter(Boolean) : [],
+      redirect_risk: viralColor[linkSafety.redirect_risk] ? linkSafety.redirect_risk : DEFAULT_ANALYSIS_RESULT.link_safety.redirect_risk,
+      category: typeof linkSafety.category === "string" && linkSafety.category.trim()
+        ? linkSafety.category
+        : DEFAULT_ANALYSIS_RESULT.link_safety.category,
+      domain_age: typeof linkSafety.domain_age === "string" && linkSafety.domain_age.trim()
+        ? linkSafety.domain_age
+        : DEFAULT_ANALYSIS_RESULT.link_safety.domain_age,
+      is_url_analyzed: Boolean(linkSafety.is_url_analyzed),
+    },
+    web_verified_sources: Array.isArray(raw.web_verified_sources)
+      ? raw.web_verified_sources
+          .filter((item) => item && typeof item === "object")
+          .map((item) => ({
+            claim: typeof item.claim === "string" && item.claim.trim() ? item.claim : "Claim unavailable",
+            verdict: claimColor[item.verdict] ? item.verdict : "Unverified",
+            source: typeof item.source === "string" && item.source.trim() ? item.source : "Unknown source",
+          }))
+      : [],
+    propaganda_patterns: Array.isArray(raw.propaganda_patterns) ? raw.propaganda_patterns.filter(Boolean) : [],
+    red_flags: Array.isArray(raw.red_flags) ? raw.red_flags.filter(Boolean) : [],
+    source_credibility: typeof raw.source_credibility === "string" && raw.source_credibility.trim()
+      ? raw.source_credibility
+      : DEFAULT_ANALYSIS_RESULT.source_credibility,
+    account_reliability: {
+      ...DEFAULT_ANALYSIS_RESULT.account_reliability,
+      ...accountReliability,
+      score: clampPercent(accountReliability.score),
+      insight: typeof accountReliability.insight === "string" && accountReliability.insight.trim()
+        ? accountReliability.insight
+        : DEFAULT_ANALYSIS_RESULT.account_reliability.insight,
+    },
+    viral_risk: viralColor[raw.viral_risk] ? raw.viral_risk : DEFAULT_ANALYSIS_RESULT.viral_risk,
+    crowd_verification: {
+      ...DEFAULT_ANALYSIS_RESULT.crowd_verification,
+      ...crowdVerification,
+      trust_percent: clampPercent(crowdVerification.trust_percent),
+      doubt_percent: clampPercent(crowdVerification.doubt_percent),
+    },
+    final_verdict: verdictConfig[raw.final_verdict] ? raw.final_verdict : DEFAULT_ANALYSIS_RESULT.final_verdict,
+    confidence_note: typeof raw.confidence_note === "string" && raw.confidence_note.trim()
+      ? raw.confidence_note
+      : DEFAULT_ANALYSIS_RESULT.confidence_note,
+    explanation: typeof raw.explanation === "string" && raw.explanation.trim()
+      ? raw.explanation
+      : DEFAULT_ANALYSIS_RESULT.explanation,
+  };
+}
+
+function extractImagePayload(dataUrl) {
+  const [prefix = "", base64 = ""] = String(dataUrl || "").split(",");
+  const match = prefix.match(/^data:(image\/[-+.\w]+);base64$/i);
+
+  return {
+    base64,
+    mediaType: match?.[1] || "image/jpeg",
+  };
+}
 
 function isValidUrl(str) {
   try { const u = new URL(str.trim()); return u.protocol === "http:" || u.protocol === "https:"; }
@@ -152,6 +262,7 @@ export default function VerifaiPro() {
   const [error, setError] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [imageBase64, setImageBase64] = useState(null);
+  const [imageMediaType, setImageMediaType] = useState(null);
   const fileRef = useRef();
 
   const SCAN_STEPS = [
@@ -179,17 +290,15 @@ export default function VerifaiPro() {
           ? `Extract and analyze this image content for misinformation. Also use web search to verify any claims or text found.`
           : `Use web search to verify claims in this content and check any URLs mentioned. Analyze for misinformation:\n\n${input}`;
 
-      const userMessages = imageBase64
-        ? [{ role: "user", content: [
-            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
-            { type: "text", text: userMsg }
-          ]}]
-        : [{ role: "user", content: userMsg }];
-
-      const apiMessages = [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...userMessages,
-      ];
+      const userMessages = [{
+        role: "user",
+        content: imageBase64
+          ? [
+              { type: "image", source: { type: "base64", media_type: imageMediaType || "image/jpeg", data: imageBase64 } },
+              { type: "text", text: userMsg }
+            ]
+          : [{ type: "text", text: userMsg }],
+      }];
 
       // 🔒 Calls our secure Netlify Function proxy instead of Anthropic directly
       const res = await fetch("/api/anthropic", {
@@ -198,11 +307,25 @@ export default function VerifaiPro() {
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
-          messages: apiMessages,
+          system: SYSTEM_PROMPT,
+          messages: userMessages,
         }),
       });
 
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        const errText = errJson?.error?.message || errJson?.error || `HTTP ${res.status}`;
+        const normalizedError = typeof errText === "string" ? errText : JSON.stringify(errText);
+
+        if (/credit balance is too low|plans & billing|purchase credits/i.test(normalizedError)) {
+          throw new Error("The Anthropic API key is valid, but that account has no credits. Add credits in Anthropic Plans & Billing or switch to a funded API key.");
+        }
+
+        throw new Error(normalizedError);
+      }
+
       const data = await res.json();
+      console.debug('Anthropic response', data);
       const fullText = data.content?.map(b => b.type === "text" ? b.text : "").filter(Boolean).join("");
       const cleaned = fullText.replace(/```json[\s\S]*?```|```[\s\S]*?```/g, m =>
         m.replace(/```json|```/g, "").trim()
@@ -210,24 +333,30 @@ export default function VerifaiPro() {
 
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error("No JSON in response");
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = normalizeAnalysisResult(JSON.parse(jsonMatch[0]));
 
       clearInterval(stepInterval);
       setScanStep(SCAN_STEPS.length);
       setResult(parsed);
     } catch (e) {
       clearInterval(stepInterval);
-      setError("Analysis failed. The content may be too complex or an API error occurred.");
+      console.error('Analysis error', e);
+      setError(`Analysis failed: ${e.message}`);
     } finally {
       setLoading(false);
     }
-  }, [input, imageBase64]);
+  }, [imageBase64, imageMediaType, input]);
 
   const handleFile = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => { setImagePreview(ev.target.result); setImageBase64(ev.target.result.split(",")[1]); };
+    reader.onload = (ev) => {
+      const { base64, mediaType } = extractImagePayload(ev.target.result);
+      setImagePreview(ev.target.result);
+      setImageBase64(base64);
+      setImageMediaType(mediaType || file.type || "image/jpeg");
+    };
     reader.readAsDataURL(file);
   };
 
@@ -236,14 +365,19 @@ export default function VerifaiPro() {
       if (item.type.startsWith("image/")) {
         const file = item.getAsFile();
         const reader = new FileReader();
-        reader.onload = ev => { setImagePreview(ev.target.result); setImageBase64(ev.target.result.split(",")[1]); };
+        reader.onload = (ev) => {
+          const { base64, mediaType } = extractImagePayload(ev.target.result);
+          setImagePreview(ev.target.result);
+          setImageBase64(base64);
+          setImageMediaType(mediaType || file?.type || "image/jpeg");
+        };
         reader.readAsDataURL(file);
         return;
       }
     }
   }, []);
 
-  const reset = () => { setInput(""); setImageBase64(null); setImagePreview(null); setResult(null); setError(null); setScanStep(-1); };
+  const reset = () => { setInput(""); setImageBase64(null); setImageMediaType(null); setImagePreview(null); setResult(null); setError(null); setScanStep(-1); };
 
   const verdict = result ? (verdictConfig[result.final_verdict] || verdictConfig["Unverified"]) : null;
   const ls = result?.link_safety;

@@ -28,27 +28,49 @@ export default defineConfig(({ mode }) => {
               let body = ''
               req.on('data', (chunk) => (body += chunk))
               req.on('end', async () => {
-                const response = await fetch('https://api.anthropic.com/v1/messages', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': anthropicKey,
-                    'anthropic-version': '2023-06-01',
-                    'anthropic-beta': 'interleaved-thinking-2025-05-14',
-                  },
-                  body: body,
-                })
+                try {
+                  if (!anthropicKey) {
+                    res.statusCode = 400
+                    res.setHeader('Content-Type', 'application/json')
+                    res.setHeader('Access-Control-Allow-Origin', '*')
+                    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+                    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+                    return res.end(JSON.stringify({ error: 'Missing Anthropic API key in environment. Set ANTHROPIC_API_KEY or VITE_ANTHROPIC_API_KEY.' }))
+                  }
 
-                const data = await response.text()
-                res.statusCode = response.status
-                res.setHeader('Content-Type', 'application/json')
-                res.setHeader('Access-Control-Allow-Origin', '*')
-                res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-                res.end(data)
+                  const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'x-api-key': anthropicKey,
+                      'anthropic-version': '2023-06-01',
+                      'anthropic-beta': 'interleaved-thinking-2025-05-14',
+                    },
+                    body: body,
+                  })
+
+                  const data = await response.text()
+                  res.statusCode = response.status
+                  res.setHeader('Content-Type', 'application/json')
+                  res.setHeader('Access-Control-Allow-Origin', '*')
+                  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+                  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+                  res.end(data)
+                } catch (err) {
+                  res.statusCode = 500
+                  res.setHeader('Content-Type', 'application/json')
+                  res.setHeader('Access-Control-Allow-Origin', '*')
+                  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+                  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+                  res.end(JSON.stringify({ error: err.message }))
+                }
               })
             } catch (err) {
               res.statusCode = 500
               res.setHeader('Content-Type', 'application/json')
+              res.setHeader('Access-Control-Allow-Origin', '*')
+              res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+              res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
               res.end(JSON.stringify({ error: err.message }))
             }
           })
