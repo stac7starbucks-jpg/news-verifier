@@ -17,11 +17,13 @@ export default async function handler(req, res) {
   try {
     const body = req.body;
 
+    const anthropicKey = process.env.ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
+
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "x-api-key": anthropicKey,
         "anthropic-version": "2023-06-01",
         "anthropic-beta": "interleaved-thinking-2025-05-14",
       },
